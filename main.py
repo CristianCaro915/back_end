@@ -13,7 +13,7 @@ from datetime import datetime
 from validation_functions import check_excel_cliente, check_excel_niq, validate_client_with_nlp
 
 # Importar funciones de utilidad para procesamiento de datos
-from data_processing_utils import align_numeric_and_clean, filter_by_fact_and_group, normalize_string
+from data_processing_utils import align_numeric_and_clean, filter_by_fact_and_group, normalize_string, extract_metrics_from_niq
 
 
 class UnifyChannelsBrandsRequest(BaseModel):
@@ -514,10 +514,15 @@ async def calculate_coverage_total(request: CoverageTotalRequest):
         
         # 4. Aplicar periodicidad y extraer WD, ND, Share
         try:
-            # Variables de métricas
-            wd = 99
-            nd = 99
-            share = 99
+            # Extraer métricas de NIQ
+            nd, wd, share = extract_metrics_from_niq(
+                df_niq_raw_copy=df_niq_raw_copy,
+                drill_down_level=request.drill_down_level,
+                nd_fact_name=data_manager.fact_selections.get("Numeric Distribution (ND)", ""),
+                wd_fact_name=data_manager.fact_selections.get("Weighted Distribution (WD)", ""),
+                share_fact_name=data_manager.fact_selections.get("Share", ""),
+                non_num_niq=data_manager.non_num_niq
+            )
             
             # Agrupar columnas si es bimensual
             if data_manager.periodicity == 'bimonthly':
@@ -603,7 +608,10 @@ async def calculate_coverage_total(request: CoverageTotalRequest):
         # 6. Construir respuesta
         try:
             # 6.1 Scorecard
-            manufacturer = df_niq_copy.iloc[0, 0] if len(df_niq_copy) > 0 else "Unknown"
+            manufacturer = "Unknown"
+            manufacts = df_niq_raw_copy.iloc[:, 0].dropna().unique().tolist()
+            if len(manufacts) > 0 and len(df_niq_raw_copy.columns) > 0:
+                manufacturer = manufacts[0]
             time_frame = period_names[-1] if period_names else "N/A"
             
             # latest_mat y mat_yago
@@ -744,6 +752,7 @@ async def calculate_coverage_channels(request: CoverageChannelsRequest):
         # 0. Hacer copias locales
         df_client_copy = data_manager.df_client.copy()
         df_niq_copy = data_manager.df_niq.copy()
+        df_niq_raw_copy = data_manager.df_niq_raw.copy()
         
         logger.info(f"Copias creadas - Cliente: {df_client_copy.shape}, NIQ: {df_niq_copy.shape}")
         
@@ -792,10 +801,15 @@ async def calculate_coverage_channels(request: CoverageChannelsRequest):
         
         # 4. Aplicar periodicidad
         try:
-            # Variables de métricas
-            wd = 99
-            nd = 99
-            share = 99
+            # Extraer métricas de NIQ
+            nd, wd, share = extract_metrics_from_niq(
+                df_niq_raw_copy=df_niq_raw_copy,
+                drill_down_level=request.drill_down_level,
+                nd_fact_name=data_manager.fact_selections.get("Numeric Distribution (ND)", ""),
+                wd_fact_name=data_manager.fact_selections.get("Weighted Distribution (WD)", ""),
+                share_fact_name=data_manager.fact_selections.get("Share", ""),
+                non_num_niq=data_manager.non_num_niq
+            )
             
             # Agrupar columnas si es bimensual
             if data_manager.periodicity == 'bimonthly':
@@ -1008,8 +1022,9 @@ async def calculate_coverage_channels(request: CoverageChannelsRequest):
         try:
             # Obtener manufacturer
             manufacturer = "Unknown"
-            if len(df_niq_copy) > 0 and len(df_niq_copy.columns) > 0:
-                manufacturer = df_niq_copy.iloc[0, 0]
+            manufacts = df_niq_raw_copy.iloc[:, 0].dropna().unique().tolist()
+            if len(manufacts) > 0 and len(df_niq_raw_copy.columns) > 0:
+                manufacturer = manufacts[0]
             
             # ===== CONSTRUIR RESPUESTA PARA DTT =====
             dtt_response = []
@@ -1165,6 +1180,7 @@ async def calculate_coverage_brands(request: CoverageBrandsRequest):
         # 0. Hacer copias locales
         df_client_copy = data_manager.df_client.copy()
         df_niq_copy = data_manager.df_niq.copy()
+        df_niq_raw_copy = data_manager.df_niq_raw.copy()
         
         logger.info(f"Copias creadas - Cliente: {df_client_copy.shape}, NIQ: {df_niq_copy.shape}")
         
@@ -1212,10 +1228,15 @@ async def calculate_coverage_brands(request: CoverageBrandsRequest):
         
         # 4. Aplicar periodicidad
         try:
-            # Variables de métricas
-            wd = 99
-            nd = 99
-            share = 99
+            # Extraer métricas de NIQ
+            nd, wd, share = extract_metrics_from_niq(
+                df_niq_raw_copy=df_niq_raw_copy,
+                drill_down_level=request.drill_down_level,
+                nd_fact_name=data_manager.fact_selections.get("Numeric Distribution (ND)", ""),
+                wd_fact_name=data_manager.fact_selections.get("Weighted Distribution (WD)", ""),
+                share_fact_name=data_manager.fact_selections.get("Share", ""),
+                non_num_niq=data_manager.non_num_niq
+            )
             
             # Agrupar columnas si es bimensual
             if data_manager.periodicity == 'bimonthly':
@@ -1255,8 +1276,10 @@ async def calculate_coverage_brands(request: CoverageBrandsRequest):
             
             # Obtener manufacturer
             manufacturer = "Unknown"
-            if len(df_niq_copy) > 0 and len(df_niq_copy.columns) > 0:
-                manufacturer = df_niq_copy.iloc[0, 0]
+            manufacts = df_niq_raw_copy.iloc[:, 0].dropna().unique().tolist()
+
+            if len(manufacts) > 0 and len(df_niq_raw_copy.columns) > 0:
+                manufacturer = manufacts[0]
             
             # Diccionario de resultados por marca
             results = {}
@@ -1278,7 +1301,6 @@ async def calculate_coverage_brands(request: CoverageBrandsRequest):
                     brand_normalized = normalize_string(brand_name)
                     
                     # Filtrar df_niq_copy por marca (columna 0 porque se borraron las columnas no numéricas)
-                    
                     niq_col_brand = df_niq_copy.columns[0]
                     df_niq_brand = df_niq_copy[
                         df_niq_copy[niq_col_brand].apply(normalize_string) == brand_normalized

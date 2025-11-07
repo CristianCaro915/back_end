@@ -221,14 +221,7 @@ def filter_by_fact_and_group(
         logger.info(f"Cliente: Ajustando unidades según input_data_type='{input_data_type}'")
         numeric_cols_client = dfc.select_dtypes(include=[np.number]).columns
 
-        if input_data_type == "Grams":
-            mask = dfc["unit"] != "gr"
-            if mask.any():
-                dfc.loc[mask, numeric_cols_client] = dfc.loc[mask, numeric_cols_client] * 1
-                dfc.loc[mask, "unit"] = "gr"
-                logger.info(f"Cliente: Ajustadas {mask.sum()} filas a 'gr'")
-
-        elif input_data_type == "Kilograms":
+        if input_data_type == "Kilograms":
             mask_gr = dfc["unit"] == "gr"
             if mask_gr.any():
                 dfc.loc[mask_gr, numeric_cols_client] = dfc.loc[mask_gr, numeric_cols_client] * 1000
@@ -243,7 +236,7 @@ def filter_by_fact_and_group(
             
             mask_units = dfc["unit"] == "units"
             if mask_units.any():
-                dfc.loc[mask_units, numeric_cols_client] = dfc.loc[mask_units, numeric_cols_client] * 1
+                dfc.loc[mask_units, numeric_cols_client] = dfc.loc[mask_units, numeric_cols_client] * 1 # factor de conversión ausente
                 dfc.loc[mask_units, "unit"] = "kg"
                 logger.info(f"Cliente: Ajustadas {mask_units.sum()} filas de 'units' a 'kg'")
 
@@ -262,16 +255,10 @@ def filter_by_fact_and_group(
             
             mask_units = dfc["unit"] == "units"
             if mask_units.any():
-                dfc.loc[mask_units, numeric_cols_client] = dfc.loc[mask_units, numeric_cols_client] * 1
+                dfc.loc[mask_units, numeric_cols_client] = dfc.loc[mask_units, numeric_cols_client] * 1 # factor de conversión ausente
                 dfc.loc[mask_units, "unit"] = "lt"
                 logger.info(f"Cliente: Ajustadas {mask_units.sum()} filas de 'units' a 'lt'")
 
-        elif input_data_type == "Milliliters":
-            mask = dfc["unit"] != "ml"
-            if mask.any():
-                dfc.loc[mask, numeric_cols_client] = dfc.loc[mask, numeric_cols_client] * 1000
-                dfc.loc[mask, "unit"] = "ml"
-                logger.info(f"Cliente: Convertidas {mask.sum()} filas a 'ml'")
     else:
         logger.info("Cliente: No hay columna 'unit', omitiendo ajuste de unidades")
 
@@ -300,4 +287,164 @@ def filter_by_fact_and_group(
 
     # Retornar dataframes listos 
     return dfc_grouped, dfn_grouped
+
+
+def extract_metrics_from_niq(
+    df_niq_raw_copy: pd.DataFrame,
+    drill_down_level: str,
+    nd_fact_name: str,
+    wd_fact_name: str,
+    share_fact_name: str,
+    non_num_niq: int
+) -> tuple[float, float, float]:
+    """
+    Extrae las métricas ND, WD y Share de df_niq_raw_copy según el drill down level.
+    
+    Args:
+        df_niq_raw_copy: DataFrame de NIQ sin procesar
+        drill_down_level: Nivel de análisis ('Total', 'Channels', 'Brand')
+        nd_fact_name: Nombre del fact para Numeric Distribution
+        wd_fact_name: Nombre del fact para Weighted Distribution
+        share_fact_name: Nombre del fact para Share
+        non_num_niq: Cantidad de columnas no numéricas en NIQ
+    
+    Returns:
+        tuple[float, float, float]: (nd, wd, share)
+    """
+    logger.info(f"=== Iniciando extract_metrics_from_niq ===")
+    logger.info(f"Drill down level: {drill_down_level}")
+    logger.info(f"ND fact name: {nd_fact_name}")
+    logger.info(f"WD fact name: {wd_fact_name}")
+    logger.info(f"Share fact name: {share_fact_name}")
+    
+    # Valores por defecto
+    nd, wd, share = 99, 99, 99
+    
+    try:
+        # Solo procesar para nivel 'Total'
+        if drill_down_level.lower() != 'total':
+            logger.info(f"Drill down level '{drill_down_level}' no es 'Total'. Retornando valores por defecto.")
+            return nd, wd, share
+        
+        # Hacer copia local
+        df_copy = df_niq_raw_copy.copy()
+        logger.info(f"Copia creada. Shape: {df_copy.shape}")
+        
+        # Identificar última columna no numérica (FACT)
+        last_non_numeric_col_idx = non_num_niq - 1
+        if last_non_numeric_col_idx < 0 or last_non_numeric_col_idx >= len(df_copy.columns):
+            logger.error(f"Índice de última columna no numérica fuera de rango: {last_non_numeric_col_idx}")
+            return nd, wd, share
+        
+        last_non_numeric_col = df_copy.columns[last_non_numeric_col_idx]
+        manufacturer_col = df_copy.columns[0]
+        
+        logger.info(f"Columna de Manufacturer: {manufacturer_col}")
+        logger.info(f"Columna de FACT (última no numérica): {last_non_numeric_col}")
+        
+        # Verificar si la columna Manufacturer tiene al menos una celda nula/vacía
+        null_manufacturer_count = df_copy[manufacturer_col].isna().sum()
+        empty_manufacturer_count = (df_copy[manufacturer_col].astype(str).str.strip() == '').sum()
+        total_null_empty = null_manufacturer_count + empty_manufacturer_count
+        
+        logger.info(f"Celdas nulas en Manufacturer: {null_manufacturer_count}")
+        logger.info(f"Celdas vacías en Manufacturer: {empty_manufacturer_count}")
+        logger.info(f"Total nulas/vacías: {total_null_empty}")
+        
+        if total_null_empty == 0:
+            logger.info("No hay celdas nulas/vacías en Manufacturer. Retornando valores por defecto.")
+            return nd, wd, share
+        
+        # Filtrar por filas donde Manufacturer es nulo/vacío
+        df_filtered = df_copy[
+            df_copy[manufacturer_col].isna() | 
+            (df_copy[manufacturer_col].astype(str).str.strip() == '')
+        ].copy()
+        
+        logger.info(f"Filas después de filtrar Manufacturer nulo/vacío: {len(df_filtered)}")
+        
+        if len(df_filtered) == 0:
+            logger.warning("No hay filas después de filtrar por Manufacturer nulo/vacío")
+            return nd, wd, share
+        
+        # Filtrar por facts relevantes
+        df_filtered = df_filtered[
+            (df_filtered[last_non_numeric_col] == nd_fact_name) |
+            (df_filtered[last_non_numeric_col] == wd_fact_name) |
+            (df_filtered[last_non_numeric_col] == share_fact_name)
+        ].copy()
+        
+        logger.info(f"Filas después de filtrar por facts: {len(df_filtered)}")
+        
+        if len(df_filtered) == 0:
+            logger.warning("No hay filas después de filtrar por facts relevantes")
+            return nd, wd, share
+        
+        # Obtener última columna numérica (último mes)
+        numeric_cols = df_filtered.select_dtypes(include=[np.number]).columns.tolist()
+        if len(numeric_cols) == 0:
+            logger.error("No hay columnas numéricas en df_filtered")
+            return nd, wd, share
+        
+        last_numeric_col = numeric_cols[-1]
+        logger.info(f"Última columna numérica (último mes): {last_numeric_col}")
+        
+        # Caso 1: Exactamente 3 filas (una por cada fact)
+        if len(df_filtered) == 3:
+            logger.info("Exactamente 3 filas encontradas. Extrayendo métricas directamente.")
+            
+            for idx, row in df_filtered.iterrows():
+                fact_value = row[last_non_numeric_col]
+                metric_value = row[last_numeric_col]
+                
+                if fact_value == nd_fact_name:
+                    nd = float(metric_value) if pd.notna(metric_value) else 99.99
+                    logger.info(f"ND extraído: {nd}")
+                elif fact_value == wd_fact_name:
+                    wd = float(metric_value) if pd.notna(metric_value) else 99.99
+                    logger.info(f"WD extraído: {wd}")
+                elif fact_value == share_fact_name:
+                    share = float(metric_value) if pd.notna(metric_value) else 99.99
+                    logger.info(f"Share extraído: {share}")
+        
+        # Caso 2: Más de 3 filas, filtrar por cada fact y tomar el mayor
+        else:
+            logger.info(f"Más de 3 filas encontradas ({len(df_filtered)}). Ordenando y tomando el mayor valor de cada fact.")
+            
+            # ND
+            df_nd = df_filtered[df_filtered[last_non_numeric_col] == nd_fact_name].copy()
+            if len(df_nd) > 0:
+                df_nd_sorted = df_nd.sort_values(by=last_numeric_col, ascending=False)
+                nd = float(df_nd_sorted.iloc[0][last_numeric_col]) if pd.notna(df_nd_sorted.iloc[0][last_numeric_col]) else 99.99
+                logger.info(f"ND extraído (mayor): {nd}")
+            else:
+                logger.warning(f"No se encontraron filas para ND fact: {nd_fact_name}")
+            
+            # WD
+            df_wd = df_filtered[df_filtered[last_non_numeric_col] == wd_fact_name].copy()
+            if len(df_wd) > 0:
+                df_wd_sorted = df_wd.sort_values(by=last_numeric_col, ascending=False)
+                wd = float(df_wd_sorted.iloc[0][last_numeric_col]) if pd.notna(df_wd_sorted.iloc[0][last_numeric_col]) else 99.99
+                logger.info(f"WD extraído (mayor): {wd}")
+            else:
+                logger.warning(f"No se encontraron filas para WD fact: {wd_fact_name}")
+            
+            # Share
+            df_share = df_filtered[df_filtered[last_non_numeric_col] == share_fact_name].copy()
+            if len(df_share) > 0:
+                df_share_sorted = df_share.sort_values(by=last_numeric_col, ascending=False)
+                share = float(df_share_sorted.iloc[0][last_numeric_col]) if pd.notna(df_share_sorted.iloc[0][last_numeric_col]) else 99.99
+                logger.info(f"Share extraído (mayor): {share}")
+            else:
+                logger.warning(f"No se encontraron filas para Share fact: {share_fact_name}")
+        
+        logger.info(f"=== Fin extract_metrics_from_niq ===")
+        logger.info(f"Métricas finales - ND: {nd}, WD: {wd}, Share: {share}")
+        
+        return nd, wd, share
+    
+    except Exception as e:
+        logger.error(f"Error en extract_metrics_from_niq: {str(e)}")
+        logger.error(f"Retornando valores por defecto (99.99)")
+        return 99.99, 99.99, 99.99
 

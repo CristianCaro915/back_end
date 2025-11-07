@@ -305,4 +305,3 @@ def filter_none_values(df: pd.DataFrame) -> Tuple[pd.DataFrame, int]:
     logger.info(f"Filtrado completado. Se eliminaron {rows_deleted} filas de {initial_rows} totales")
     
     return df_filtered, rows_deleted
-

@@ -32,6 +32,8 @@ El endpoint acepta un JSON con la siguiente estructura:
 | `drill_down_level` | string | Sí | Nivel de análisis para el cálculo | "Brand" |
 | `brand_names` | List[string] | Sí | Lista de nombres de marcas a analizar | ["Doritos", "Cheetos", "Lays"] |
 
+**Nota:** Si el frontend envía una lista completa de todas las marcas, el endpoint procesará cada una de ellas.
+
 ### Modelo Pydantic
 
 ```python
@@ -304,6 +306,7 @@ curl -X POST "http://localhost:8000/calculate-coverage-brands" \
 import requests
 
 url = "http://localhost:8000/calculate-coverage-brands"
+
 payload = {
     "drill_down_level": "Brand",
     "brand_names": ["Doritos", "Cheetos", "Lays"]
@@ -333,11 +336,18 @@ fetch('http://localhost:8000/calculate-coverage-brands', {
 ## Notas Importantes
 
 1. **Normalización de Nombres:** Los nombres de marcas se normalizan a minúsculas y sin espacios para la comparación
+
 2. **Datos Faltantes:** Si una marca no tiene datos en NIQ o Cliente, se retorna un error específico para esa marca sin detener el procesamiento de las demás
-3. **Cálculo de MAT:** Moving Annual Total se calcula sobre los últimos 12 períodos (monthly) o 6 (bimonthly)
-4. **Periodicidad Bimonthly:** Las columnas se agrupan por pares y los nombres se concatenan
-5. **Fallback Values:** Si los cálculos de tendencia fallan, se usan valores de fallback (99.9)
-6. **Logging:** Todas las operaciones se registran en los logs para debugging
+
+3. **Múltiples Marcas:** El endpoint acepta cualquier cantidad de marcas en `brand_names`. Si el frontend envía una lista completa, todas serán procesadas
+
+4. **Cálculo de MAT:** Moving Annual Total se calcula sobre los últimos 12 períodos (monthly) o 6 (bimonthly)
+
+5. **Periodicidad Bimonthly:** Las columnas se agrupan por pares y los nombres se concatenan
+
+6. **Fallback Values:** Si los cálculos de tendencia fallan, se usan valores de fallback (99.9)
+
+7. **Logging:** Todas las operaciones se registran en los logs para debugging
 
 ## Orden de Ejecución de Endpoints
 
